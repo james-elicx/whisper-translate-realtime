@@ -1,0 +1,6 @@
+faster-whisper>=1.2.1
+# faster-whisper 1.2.1 breaks with PyAV 19 (decode_audio passes a removed argument)
+av<19
+numpy
+# cuBLAS for CTranslate2 on the GPU (cuDNN already ships inside the ctranslate2 wheel on Windows)
+nvidia-cublas-cu12>=12.8

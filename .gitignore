@@ -1,0 +1,31 @@
+# Python environment (created by setup.bat) and bytecode caches.
+# __pycache__ files embed full local paths, so keep them out.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Whisper models: large and downloaded separately
+models/
+*.bin
+*.safetensors
+
+# Test media and translation logs (may contain other people's voices/chat)
+*.mp4
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.log
+*.srt
+
+# Local tool/editor settings
+.claude/settings.local.json
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+desktop.ini
