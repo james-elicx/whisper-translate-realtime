@@ -92,3 +92,7 @@ Run `run.bat --help` for the full list.
 | `process_audio.py` | Captures one program's audio through Windows process loopback |
 | `run.bat` | Starts it, passing any options through |
 | `setup.bat` | Creates `.venv` and installs the packages in `requirements.txt` |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
