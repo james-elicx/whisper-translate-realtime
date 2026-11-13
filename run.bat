@@ -1,8 +1,8 @@
 @echo off
-rem whisper-translate-realtime: live English captions for a program's audio
-rem (cs2.exe by default). Extra options pass through, e.g.:
+rem whisper-translate-realtime: live English captions for all system audio,
+rem shown in this console. Extra options pass through, e.g.:
 rem   run.bat --show-original
-rem   run.bat --model D:\models\faster-whisper-large-v3
+rem   run.bat --process cs2.exe --overlay
 cd /d "%~dp0"
 set "PY=%~dp0.venv\Scripts\python.exe"
 if not exist "%PY%" (

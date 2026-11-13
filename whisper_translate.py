@@ -1,15 +1,15 @@
-"""whisper-translate-realtime: live English captions for any program's audio.
+"""whisper-translate-realtime: live English captions for what your PC is playing.
 
-Captures one program's audio (cs2.exe by default), translates speech to
-English on the GPU with Whisper, and shows it in a click-through overlay and
-in this console.
+By default it records all system audio (the default output device) and prints
+English translations in this console. Nothing looks at or interacts with any
+other program unless you opt in with --process or --overlay.
 
-    run.bat                                        CS2 voice chat (the default)
-    run.bat --process Microsoft.Media.Player.exe   whatever the Media Player app plays
-    run.bat --language auto                        detect the spoken language per line
-    run.bat --show-original                        also show the original text under each line
-    run.bat --no-overlay                           console only (e.g. on a second monitor)
-    run.bat --help                                 all options
+    run.bat                        all system audio, captions in this console
+    run.bat --process cs2.exe      only one program's audio (opt-in)
+    run.bat --overlay              also show captions on top of the screen (opt-in)
+    run.bat --language auto        detect the spoken language per line
+    run.bat --show-original        also show the original text under each line
+    run.bat --help                 all options
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ import ctypes
 import os
 import queue
 import re
+import shutil
 import signal
 import sys
 import threading
@@ -62,12 +63,15 @@ def add_cuda_dlls() -> None:
 
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Live English captions for any program's audio (default: CS2 voice chat).",
+        description="Live English captions for what your PC is playing. By default it records all "
+                    "system audio and prints to this console; --process and --overlay are opt-in.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    src = p.add_argument_group("audio source")
-    src.add_argument("--process", default="cs2.exe", help="program whose audio to translate")
-    src.add_argument("--pid", type=int, help="capture this process ID instead of --process")
+    src = p.add_argument_group("audio source (default: all system audio)")
+    src.add_argument("--process",
+                     help="opt-in: capture only this program's audio (e.g. cs2.exe) instead of all system "
+                          "audio. The program is found by name in the Windows process list")
+    src.add_argument("--pid", type=int, help="opt-in: capture only this process ID's audio")
     src.add_argument("--test-file", help="translate an audio file instead (played in real time)")
 
     tr = p.add_argument_group("translation")
@@ -80,20 +84,21 @@ def parse_args(argv=None) -> argparse.Namespace:
     tr.add_argument("--beam-size", type=int, default=5)
     tr.add_argument("--show-original", action="store_true", help="also show the original-language text")
     tr.add_argument("--no-partials", dest="partials", action="store_false",
-                    help="only show finished lines (less GPU use while someone is talking)")
+                    help="don't show the live preview while someone is talking (less GPU use)")
     tr.add_argument("--silence", type=float, default=0.6, help="seconds of silence that end a line")
     tr.add_argument("--max-line", type=float, default=10.0, help="force a line out after this many seconds")
     tr.add_argument("--prompt", help="optional context/vocabulary hint passed to Whisper")
 
-    ui = p.add_argument_group("display")
-    ui.add_argument("--no-overlay", dest="overlay", action="store_false", help="console output only")
-    ui.add_argument("--position", choices=["bottom", "top"], default="bottom")
-    ui.add_argument("--offset", type=float, default=0.16, help="distance from that screen edge, as a fraction of height")
-    ui.add_argument("--width", type=float, default=0.6, help="overlay width as a fraction of screen width")
-    ui.add_argument("--font-size", type=int, default=22)
-    ui.add_argument("--lines", type=int, default=3, help="max finished lines on screen")
-    ui.add_argument("--hold", type=float, default=8.0, help="seconds each line stays on screen")
+    ui = p.add_argument_group("display (default: this console)")
     ui.add_argument("--log", help="append translations to this text file")
+    ui.add_argument("--overlay", action="store_true",
+                    help="opt-in: also show captions in an always-on-top, click-through window over the screen")
+    ui.add_argument("--position", choices=["bottom", "top"], default="bottom", help="overlay: screen edge")
+    ui.add_argument("--offset", type=float, default=0.16, help="overlay: distance from that edge, as a fraction of height")
+    ui.add_argument("--width", type=float, default=0.6, help="overlay: width as a fraction of screen width")
+    ui.add_argument("--font-size", type=int, default=22, help="overlay: text size")
+    ui.add_argument("--lines", type=int, default=3, help="overlay: max finished lines on screen")
+    ui.add_argument("--hold", type=float, default=8.0, help="overlay: seconds each line stays on screen")
     # Testing aids
     p.add_argument("--opaque", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--exit-after", type=float, help=argparse.SUPPRESS)
@@ -209,8 +214,8 @@ class Translator(threading.Thread):
                         break
                 buf = np.concatenate([buf, *parts])
             except queue.Empty:
-                # The program stopped sending audio (Windows sends nothing when
-                # an app is silent), so treat the gap as silence.
+                # No audio arrived (Windows sends nothing while the output is
+                # silent), so treat the gap as silence.
                 if not len(buf):
                     continue
                 buf = np.concatenate([buf, np.zeros(int(0.1 * SR), np.float32)])
@@ -284,13 +289,36 @@ class Translator(threading.Thread):
 
 
 class Console:
-    """Prints and optionally logs events. Shared by overlay and console modes."""
+    """Prints and optionally logs events. With `live`, the line still being
+    spoken is shown at the bottom and rewritten in place until it's finished."""
 
-    def __init__(self, log_path: Optional[str]):
+    def __init__(self, log_path: Optional[str], live: bool):
         self.log = open(log_path, "a", encoding="utf-8") if log_path else None
+        self.live = live
+        self.partial_shown = False
+
+    def _clear_partial(self) -> None:
+        if self.partial_shown:
+            width = shutil.get_terminal_size().columns
+            sys.stdout.write("\r" + " " * (width - 1) + "\r")
+            sys.stdout.flush()
+            self.partial_shown = False
 
     def handle(self, ev: tuple) -> None:
         kind = ev[0]
+        if kind == "partial":
+            if self.live:
+                self._clear_partial()
+                if ev[1]:
+                    width = shutil.get_terminal_size().columns - 1
+                    line = "… " + ev[1]
+                    if len(line) > width:  # keep it on one line so \r can rewrite it
+                        line = "…" + line[-(width - 1):]
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+                    self.partial_shown = True
+            return
+        self._clear_partial()
         if kind == "status":
             print(f"• {ev[1]}", flush=True)
         elif kind == "error":
@@ -459,7 +487,9 @@ def main(argv=None) -> int:
     audio_q: "queue.Queue[np.ndarray]" = queue.Queue()
     events: "queue.Queue[tuple]" = queue.Queue()
     stop_flag = threading.Event()
-    console = Console(args.log)
+    if not args.overlay and not sys.stdout.isatty():
+        args.partials = False  # no overlay and output is redirected: nowhere to show a live preview
+    console = Console(args.log, live=args.partials and not args.overlay)
 
     def status(msg: str):
         events.put(("status", msg))
@@ -467,12 +497,17 @@ def main(argv=None) -> int:
     if args.test_file:
         source = FileFeeder(args.test_file, audio_q.put, status)
         label = args.test_file
-    else:
-        from process_audio import ProcessAudioCapture
+    elif args.process or args.pid:  # opt-in: one program only
+        from audio_capture import ProcessAudioCapture
 
         source = ProcessAudioCapture(on_audio=audio_q.put, process_name=None if args.pid else args.process,
                                      pid=args.pid, on_status=status)
         label = f"PID {args.pid}" if args.pid else args.process
+    else:  # default: everything on the output device; no program is looked at
+        from audio_capture import SystemAudioCapture
+
+        source = SystemAudioCapture(on_audio=audio_q.put, on_status=status)
+        label = "system audio"
 
     translator = Translator(args, audio_q, events)
     print(f"whisper-translate-realtime: {label} -> English  |  model {args.model} ({args.device})  |  "

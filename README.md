@@ -1,14 +1,14 @@
 # whisper-translate-realtime
 
-Live English captions for whatever a program on your PC is saying, translated while people talk. It was built for Russian voice chat in Counter-Strike 2, but it works with any app (Discord, a browser, the Media Player app…) and any of the ~99 languages Whisper understands. Everything runs locally on your GPU with [faster-whisper](https://github.com/SYSTRAN/faster-whisper), and no audio leaves your PC.
+Live English captions for whatever your PC is playing, translated while people talk. It was built for Russian voice chat in Counter-Strike 2, but it works with anything you can hear (Discord, videos, other games) and any of the ~99 languages Whisper understands. Everything runs locally on your GPU with [faster-whisper](https://github.com/SYSTRAN/faster-whisper), and no audio leaves your PC.
 
-- **One app only.** It captures a single program's audio (`cs2.exe` by default), so music and other apps don't get mixed in. It uses Windows' per-app audio capture, the same API as OBS's "Application Audio Capture". It finds the program by name in the Windows process list and never opens, reads, hooks or injects into it.
-- **Near real time.** A voice detector splits speech into lines. Each line is translated to English with Whisper `large-v3` about a second after the speaker pauses, and a live preview (yellow italic) shows while they're still talking.
-- **Overlay.** Captions appear in a transparent, click-through, always-on-top window that never takes focus, and also in the console.
+- **Hands-off by default.** It records what your speakers or headphones are playing, the same "desktop audio" that OBS and other recorders capture, and prints captions in its own console window. It doesn't look up, open or interact with any game or program.
+- **Near real time.** A voice detector splits speech into lines. Each line is translated to English with Whisper `large-v3` about a second after the speaker pauses, and the line still being spoken is previewed at the bottom of the console.
+- **Opt-in extras.** `--process cs2.exe` captures only one program's audio, and `--overlay` shows captions on top of the screen. See [Anti-cheat](#anti-cheat) for what each one does.
 
 ## Requirements
 
-- Windows 10 version 2004 or newer, or Windows 11
+- Windows 10 or 11 (`--process` needs Windows 10 version 2004 or newer)
 - An NVIDIA GPU. `large-v3` needs about 4–5 GB of video memory (tested on an RTX 5080). Without a GPU, use `--device cpu` with a smaller model.
 - Python 3.10 or newer (tested with 3.14) with the `py` launcher
 
@@ -18,21 +18,36 @@ Live English captions for whatever a program on your PC is saying, translated wh
 2. Run `setup.bat`. It creates `.venv` in the folder and installs the Python packages (about 1 GB).
 3. The first run downloads the Whisper model (about 3 GB) to `%USERPROFILE%\.cache\huggingface`, unless you point `--model` at a model you already have.
 
-## Use with CS2
+## Use
 
-1. In CS2, set **Video → Display Mode → Fullscreen Windowed**. Exclusive fullscreen draws over every other window, including the overlay.
-2. Double-click `run.bat`. You can start it before or after CS2: it waits for `cs2.exe` to start. If you restart CS2, restart this too.
-3. Press **Ctrl+C** in the console window to quit.
+1. Double-click `run.bat`. Captions appear in its console window, so put it on a second monitor or alt-tab to it.
+2. Press **Ctrl+C** in the console window to quit.
 
-## Other apps
+It hears everything your default output device plays, so music, videos and Discord get translated too. Pause other audio, or use `--process` (below). If you switch output device, for example from speakers to headphones, restart it.
 
-Pass the program's `.exe` name, as shown in Task Manager's Details tab, with `--process`. For example:
+## Anti-cheat
 
-- `run.bat --process Microsoft.Media.Player.exe` captions whatever plays in the Windows Media Player app, which is handy for testing with a video.
+Valve doesn't publish what VAC checks for, so no tool can promise anything. Here is exactly what this one does:
+
+- **Default:** it only records the output device's audio, like any audio recorder. It doesn't look up, open, read or interact with the game in any way, and draws nothing over it.
+- **`--process NAME.exe` (opt-in):** it looks the program up by name in the Windows process list (what Task Manager shows), then asks the Windows audio service for that program's audio, using the same API as OBS's "Application Audio Capture". It never opens the program, reads its memory or injects anything.
+- **`--overlay` (opt-in):** a separate always-on-top window belonging to this tool. It doesn't hook into the game or its rendering.
+
+For the least possible contact with the game, stick with the defaults. Third-party anti-cheats such as FACEIT are stricter, and this hasn't been tested with them.
+
+## Capturing one program (opt-in)
+
+`--process` captures only one program's audio, so music and other apps aren't mixed in. Pass the program's `.exe` name, as shown in Task Manager's Details tab:
+
+- `run.bat --process cs2.exe` captions CS2 only.
+- `run.bat --process Microsoft.Media.Player.exe` captions the Windows Media Player app, which is handy for testing with a video.
 - `run.bat --process discord.exe` captions Discord calls.
-- `run.bat --process chrome.exe` captions Chrome.
 
-When several processes share the name, as with Chrome and Discord, it uses the first one Windows lists, which is normally the main process. Audio from that process's child processes is included.
+It waits for the program to start, then attaches once. If you restart the program, restart this too. When several processes share the name, as with Chrome and Discord, it uses the first one Windows lists, which is normally the main process. Audio from that process's child processes is included.
+
+## Overlay (opt-in)
+
+`run.bat --overlay` also shows captions in a transparent, click-through, always-on-top window that never takes focus. For CS2, set **Video → Display Mode → Fullscreen Windowed**, because exclusive fullscreen draws over every other window, including the overlay. `--position`, `--offset`, `--width`, `--font-size`, `--lines` and `--hold` adjust where it sits and how it looks.
 
 ## Other languages
 
@@ -61,16 +76,14 @@ The folder must hold a **CTranslate2 (faster-whisper)** model, meaning `model.bi
 
 | Option | What it does |
 | --- | --- |
-| `--process NAME.exe` | Program whose audio to translate (default `cs2.exe`) |
+| `--process NAME.exe` | Opt-in: captures only this program's audio instead of all system audio |
+| `--overlay` | Opt-in: also shows captions in a window on top of the screen |
 | `--language CODE` | Spoken language (default `ru`), or `auto` to detect each line |
 | `--show-original` | Also shows the original-language text under each English line |
 | `--no-partials` | Skips the live preview, so the GPU only works when a line finishes |
-| `--no-overlay` | Console only, e.g. on a second monitor |
-| `--font-size 26`, `--lines 4`, `--hold 10` | Text size, lines kept on screen, seconds each line stays |
-| `--position top --offset 0.1` | Puts the captions near the top of the screen |
 | `--log chat.txt` | Saves every translated line to a file |
 | `--model`, `--device`, `--compute-type` | Which model to use, and on what hardware and precision |
-| `--test-file clip.wav` | Translates an audio file instead of a running program |
+| `--test-file clip.wav` | Translates an audio file instead of live audio |
 
 Run `run.bat --help` for the full list.
 
@@ -82,14 +95,14 @@ Run `run.bat --help` for the full list.
 
 ## How it works
 
-`process_audio.py` looks the program up by name in the Windows process list once, then uses the Windows process-loopback API to get a copy of its audio (including its child processes) at 16 kHz. `whisper_translate.py` runs the Silero voice detector (bundled with faster-whisper) on it every 0.2 s. When a speaker pauses for 0.6 s (`--silence`), or has talked for 10 s without a pause (`--max-line`), that stretch of audio goes to Whisper's translate-to-English mode. The result is filtered and shown.
+`audio_capture.py` gets a copy of the audio at 16 kHz. By default it records the default output device's loopback. With `--process`, it records one program (and its child processes) through the Windows process-loopback API. `whisper_translate.py` runs the Silero voice detector (bundled with faster-whisper) on that audio every 0.2 s. When a speaker pauses for 0.6 s (`--silence`), or has talked for 10 s without a pause (`--max-line`), that stretch of audio goes to Whisper's translate-to-English mode. The result is filtered and shown.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `whisper_translate.py` | Main program: voice detection, translation, overlay |
-| `process_audio.py` | Captures one program's audio through Windows process loopback |
+| `whisper_translate.py` | Main program: voice detection, translation, console output, overlay |
+| `audio_capture.py` | Records system audio (default) or one program's audio (`--process`) |
 | `run.bat` | Starts it, passing any options through |
 | `setup.bat` | Creates `.venv` and installs the packages in `requirements.txt` |
 
